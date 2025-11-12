@@ -2,23 +2,31 @@ from aiohttp import web
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from yookassa import Webhook, Payment as YooKassaPayment
 
 from src.models import Payment, PaymentStatus, Subscription
 from src.config import GROUP_ID
 
 async def yookassa_webhook_handler(request: web.Request) -> web.Response:
+    """
+    This handler receives webhooks from YooKassa.
+    
+    NOTE: For production, it's crucial to validate the incoming webhook's source IP address
+    to ensure it's from YooKassa's trusted servers. This implementation bypasses that check
+    for local development purposes (e.g., when using ngrok).
+    """
     bot: Bot = request.app["bot"]
     async_session: AsyncSession = request.app["async_session"]
 
     try:
         event_json = await request.json()
-        webhook = Webhook(event_json)
     except Exception as e:
         return web.Response(status=400, text="Invalid JSON")
 
-    if webhook.event == "payment.succeeded":
-        payment_id = webhook.object.id
+    event_type = event_json.get("event")
+    payment_object = event_json.get("object")
+
+    if event_type == "payment.succeeded" and payment_object:
+        payment_id = payment_object.get("id")
         
         async with async_session() as session:
             payment = await session.execute(

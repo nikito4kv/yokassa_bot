@@ -39,15 +39,15 @@ async def my_subscription_handler(message: Message, async_session: AsyncSession)
     Handler for the 'My Subscription' button.
     """
     async with async_session() as session:
-        subscription = await session.execute(
+        result = await session.execute(
             select(Subscription)
             .filter_by(user_id=message.from_user.id)
             .order_by(Subscription.end_date.desc())
         )
-        subscription = subscription.scalar_one_or_none()
+        subscription = result.first()
 
-        if subscription and subscription.status == SubscriptionStatus.active and subscription.end_date > datetime.now():
-            days_left = (subscription.end_date - datetime.now()).days
+        if subscription and subscription[0].status == SubscriptionStatus.active and subscription[0].end_date > datetime.now():
+            days_left = (subscription[0].end_date - datetime.now()).days
             text = f"Ваша подписка активна. Осталось дней: {days_left}"
             is_active = True
         else:

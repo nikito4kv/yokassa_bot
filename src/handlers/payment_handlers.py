@@ -39,7 +39,7 @@ async def process_payment(message: Message, bot: Bot, async_session: AsyncSessio
             },
             "confirmation": {
                 "type": "redirect",
-                "return_url": "https://t.me/your_bot_username" # Replace with your bot's username
+                "return_url": "https://t.me/sever_human_vznos_bot" # Replace with your bot's username
             },
             "capture": True,
             "description": f"Subscription for user {user_id}",

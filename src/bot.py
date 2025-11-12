@@ -45,7 +45,7 @@ async def main() -> None:
     await site.start()
 
     dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown, app_runner=runner)
+    dp.shutdown.register(lambda: on_shutdown(dp, bot, runner))
 
     try:
         await dp.start_polling(bot)

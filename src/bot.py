@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 from aiohttp import web
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -13,20 +14,26 @@ from src.handlers.payment_handlers import payment_router
 from src.handlers.group_handlers import group_router
 from src.database import async_session, engine
 from src.webhooks import setup_webhook_routes
+from src.scheduler import check_expired_subscriptions
 
-async def on_startup(dispatcher: Dispatcher, bot: Bot):
-    logging.info("Bot started.")
+async def on_startup(dispatcher: Dispatcher, bot: Bot, scheduler: AsyncIOScheduler):
+    scheduler.add_job(check_expired_subscriptions, 'interval', hours=1, args=(bot, async_session))
+    scheduler.start()
+    logging.info("Bot and scheduler started.")
 
-async def on_shutdown(dispatcher: Dispatcher, bot: Bot, app_runner: web.AppRunner):
+async def on_shutdown(dispatcher: Dispatcher, bot: Bot, app_runner: web.AppRunner, scheduler: AsyncIOScheduler):
+    scheduler.shutdown()
     await app_runner.cleanup()
     await engine.dispose()
-    logging.info("Bot and web server stopped.")
+    logging.info("Bot, scheduler, and web server stopped.")
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(async_session=async_session)
+    
+    scheduler = AsyncIOScheduler()
 
     dp.include_router(payment_router)
     dp.include_router(user_router)
@@ -44,13 +51,14 @@ async def main() -> None:
     site = web.TCPSite(runner, 'localhost', 8080) # You might want to change host and port
     await site.start()
 
-    dp.startup.register(on_startup)
-    dp.shutdown.register(lambda: on_shutdown(dp, bot, runner))
+    dp.startup.register(lambda: on_startup(dp, bot, scheduler))
+    dp.shutdown.register(lambda: on_shutdown(dp, bot, runner, scheduler))
 
     try:
         await dp.start_polling(bot)
     finally:
         await runner.cleanup()
+        scheduler.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())

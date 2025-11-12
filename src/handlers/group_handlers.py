@@ -4,10 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from src.models import Subscription, SubscriptionStatus
+from src.config import GROUP_ID
 
 group_router = Router()
 
-@group_router.chat_member(F.chat.id == -1001234567890) # Replace with your actual GROUP_ID
+@group_router.chat_member(F.chat.id == int(GROUP_ID))
 async def chat_member_handler(event: ChatMemberUpdated, async_session: AsyncSession) -> None:
     # Check if a new member joined and if an invite link was used
     if event.new_chat_member.status == "member" and event.invite_link:

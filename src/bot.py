@@ -26,7 +26,7 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher()
+    dp = Dispatcher(async_session=async_session)
 
     dp.include_router(payment_router)
     dp.include_router(user_router)

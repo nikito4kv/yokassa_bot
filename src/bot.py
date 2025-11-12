@@ -19,7 +19,7 @@ from src.scheduler import check_expired_subscriptions, send_expiration_warnings
 
 async def on_startup(bot: Bot, scheduler: AsyncIOScheduler):
     scheduler.add_job(check_expired_subscriptions, 'interval', hours=1, args=(bot, async_session))
-    scheduler.add_job(send_expiration_warnings, 'interval', days=1, args=(bot, async_session))
+    scheduler.add_job(send_expiration_warnings, 'interval', minutes=1, args=(bot, async_session))
     scheduler.start()
     logging.info("Bot and scheduler started.")
 

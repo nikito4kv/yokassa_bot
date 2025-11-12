@@ -1,3 +1,4 @@
+import logging
 from aiohttp import web
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,7 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
     try:
         event_json = await request.json()
     except Exception as e:
+        logging.error(f"Invalid JSON in webhook: {e}")
         return web.Response(status=400, text="Invalid JSON")
 
     event_type = event_json.get("event")
@@ -25,11 +27,17 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
 
     if event_type == "payment.succeeded" and payment_object:
         yookassa_payment_id = payment_object.get("id")
+        logging.info(f"Received successful payment webhook for yookassa_id: {yookassa_payment_id}")
         
         # --- Webhook Validation: Object Status Check ---
-        payment_info = YooKassaPayment.find_one(yookassa_payment_id)
-        if not payment_info or payment_info.status != 'succeeded':
-            return web.Response(status=400, text="Invalid payment status")
+        try:
+            payment_info = YooKassaPayment.find_one(yookassa_payment_id)
+            if not payment_info or payment_info.status != 'succeeded':
+                logging.warning(f"Invalid payment status for yookassa_id: {yookassa_payment_id}. Status: {payment_info.status if payment_info else 'Not Found'}")
+                return web.Response(status=400, text="Invalid payment status")
+        except Exception as e:
+            logging.error(f"Error validating payment with YooKassa API: {e}")
+            return web.Response(status=500, text="Error validating payment")
 
         async with async_session() as session:
             payment = await session.execute(
@@ -37,40 +45,46 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
             )
             payment = payment.scalar_one_or_none()
 
-            if payment and payment.status != PaymentStatus.succeeded: # Process only once
-                payment.status = PaymentStatus.succeeded
-                
-                subscription = await session.get(Subscription, payment.subscription_id)
-                if subscription:
-                    try:
-                        chat_member = await bot.get_chat_member(chat_id=int(GROUP_ID), user_id=subscription.user_id)
-                        is_member = chat_member.status in ["member", "administrator", "creator"]
-                    except Exception:
-                        is_member = False
+            if payment:
+                logging.info(f"Found payment record with ID: {payment.id} and subscription_id: {payment.subscription_id}")
+                if payment.status != PaymentStatus.succeeded: # Process only once
+                    payment.status = PaymentStatus.succeeded
+                    
+                    subscription = await session.get(Subscription, payment.subscription_id)
+                    if subscription:
+                        try:
+                            chat_member = await bot.get_chat_member(chat_id=int(GROUP_ID), user_id=subscription.user_id)
+                            is_member = chat_member.status in ["member", "administrator", "creator"]
+                        except Exception:
+                            is_member = False
 
-                    if is_member:
-                        subscription.status = SubscriptionStatus.active
-                        subscription.start_date = datetime.now()
-                        await session.commit()
-                        await bot.send_message(
-                            chat_id=subscription.user_id,
-                            text="Ваша подписка успешно продлена!"
-                        )
-                    else:
-                        invite_link = await bot.create_chat_invite_link(
-                            chat_id=int(GROUP_ID),
-                            member_limit=1,
-                            expire_date=subscription.end_date,
-                            name=f"Subscription for user {subscription.user_id}"
-                        )
-                        
-                        subscription.invite_link = invite_link.invite_link
-                        await session.commit()
+                        if is_member:
+                            subscription.status = SubscriptionStatus.active
+                            subscription.start_date = datetime.now()
+                            await session.commit()
+                            await bot.send_message(
+                                chat_id=subscription.user_id,
+                                text="Ваша подписка успешно продлена!"
+                            )
+                        else:
+                            invite_link = await bot.create_chat_invite_link(
+                                chat_id=int(GROUP_ID),
+                                member_limit=1,
+                                expire_date=subscription.end_date,
+                                name=f"Subscription for user {subscription.user_id}"
+                            )
+                            
+                            subscription.invite_link = invite_link.invite_link
+                            await session.commit()
 
-                        await bot.send_message(
-                            chat_id=subscription.user_id,
-                            text=f"Ваш платеж успешно обработан! Вот ваша ссылка для вступления в группу: {invite_link.invite_link}"
-                        )
+                            await bot.send_message(
+                                chat_id=subscription.user_id,
+                                text=f"Ваш платеж успешно обработан! Вот ваша ссылка для вступления в группу: {invite_link.invite_link}"
+                            )
+                else:
+                    logging.error(f"Subscription not found for payment_id: {payment.id}")
+            else:
+                logging.warning(f"Payment record not found for yookassa_id: {yookassa_payment_id}")
     
     return web.Response(status=200)
 

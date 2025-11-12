@@ -8,6 +8,8 @@ from aiogram.enums import ParseMode
 
 from src.config import BOT_TOKEN
 from src.handlers.user_handlers import user_router
+from src.handlers.payment_handlers import payment_router # Import payment_router
+from src.handlers.group_handlers import group_router # Import group_router
 from src.database import async_session, engine, Base
 from src.models import User # Import User model for metadata
 
@@ -23,6 +25,8 @@ async def main() -> None:
     dp = Dispatcher()
 
     dp.include_router(user_router)
+    dp.include_router(payment_router) # Include payment_router
+    dp.include_router(group_router) # Include group_router
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

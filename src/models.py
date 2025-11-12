@@ -27,6 +27,7 @@ class Subscription(Base):
     status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus))
     amount_paid: Mapped[decimal.Decimal] = mapped_column(DECIMAL)
     start_date: Mapped[datetime.datetime] = mapped_column(TIMESTAMP)
+    invite_link: Mapped[str | None]
 
 class PaymentStatus(enum.Enum):
     succeeded = "succeeded"

@@ -2,8 +2,9 @@ from aiohttp import web
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from datetime import datetime
 
-from src.models import Payment, PaymentStatus, Subscription
+from src.models import Payment, PaymentStatus, Subscription, SubscriptionStatus
 from src.config import GROUP_ID
 
 async def yookassa_webhook_handler(request: web.Request) -> web.Response:
@@ -39,22 +40,39 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                 
                 subscription = await session.get(Subscription, payment.subscription_id)
                 if subscription:
-                    # Generate invite link
-                    invite_link = await bot.create_chat_invite_link(
-                        chat_id=int(GROUP_ID),
-                        member_limit=1,
-                        expire_date=subscription.end_date,
-                        name=f"Subscription for user {subscription.user_id}"
-                    )
-                    
-                    subscription.invite_link = invite_link.invite_link
-                    await session.commit()
+                    try:
+                        # Check if user is already in the group
+                        chat_member = await bot.get_chat_member(chat_id=int(GROUP_ID), user_id=subscription.user_id)
+                        is_member = chat_member.status in ["member", "administrator", "creator"]
+                    except Exception:
+                        is_member = False
 
-                    # Send invite link to user
-                    await bot.send_message(
-                        chat_id=subscription.user_id,
-                        text=f"Ваш платеж успешно обработан! Вот ваша ссылка для вступления в группу: {invite_link.invite_link}"
-                    )
+                    if is_member:
+                        # User is already in the group, so it's a renewal
+                        subscription.status = SubscriptionStatus.active
+                        subscription.start_date = datetime.now()
+                        # The end_date is already set correctly when the subscription was created
+                        await session.commit()
+                        await bot.send_message(
+                            chat_id=subscription.user_id,
+                            text="Ваша подписка успешно продлена!"
+                        )
+                    else:
+                        # User is not in the group, so it's a new subscription
+                        invite_link = await bot.create_chat_invite_link(
+                            chat_id=int(GROUP_ID),
+                            member_limit=1,
+                            expire_date=subscription.end_date,
+                            name=f"Subscription for user {subscription.user_id}"
+                        )
+                        
+                        subscription.invite_link = invite_link.invite_link
+                        await session.commit()
+
+                        await bot.send_message(
+                            chat_id=subscription.user_id,
+                            text=f"Ваш платеж успешно обработан! Вот ваша ссылка для вступления в группу: {invite_link.invite_link}"
+                        )
     
     return web.Response(status=200)
 

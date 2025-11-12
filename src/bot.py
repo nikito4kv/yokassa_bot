@@ -3,6 +3,7 @@ import logging
 import sys
 from aiohttp import web
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from functools import partial
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -16,12 +17,12 @@ from src.database import async_session, engine
 from src.webhooks import setup_webhook_routes
 from src.scheduler import check_expired_subscriptions
 
-async def on_startup(dispatcher: Dispatcher, bot: Bot, scheduler: AsyncIOScheduler):
-    scheduler.add_job(check_expired_subscriptions, 'interval', hours=1, args=(bot, async_session))
+async def on_startup(bot: Bot, scheduler: AsyncIOScheduler):
+    scheduler.add_job(check_expired_subscriptions, 'interval', minutes=1, args=(bot, async_session))
     scheduler.start()
     logging.info("Bot and scheduler started.")
 
-async def on_shutdown(dispatcher: Dispatcher, bot: Bot, app_runner: web.AppRunner, scheduler: AsyncIOScheduler):
+async def on_shutdown(app_runner: web.AppRunner, scheduler: AsyncIOScheduler):
     scheduler.shutdown()
     await app_runner.cleanup()
     await engine.dispose()
@@ -51,8 +52,8 @@ async def main() -> None:
     site = web.TCPSite(runner, 'localhost', 8080) # You might want to change host and port
     await site.start()
 
-    dp.startup.register(lambda: on_startup(dp, bot, scheduler))
-    dp.shutdown.register(lambda: on_shutdown(dp, bot, runner, scheduler))
+    dp.startup.register(partial(on_startup, scheduler=scheduler))
+    dp.shutdown.register(partial(on_shutdown, app_runner=runner, scheduler=scheduler))
 
     try:
         await dp.start_polling(bot)

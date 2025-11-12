@@ -67,6 +67,12 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                                 text="Ваша подписка успешно продлена!"
                             )
                         else:
+                            # Unban the user in case they were previously kicked
+                            try:
+                                await bot.unban_chat_member(chat_id=int(GROUP_ID), user_id=subscription.user_id)
+                            except Exception as e:
+                                logging.info(f"Could not unban user {subscription.user_id} (they were likely not banned): {e}")
+
                             invite_link = await bot.create_chat_invite_link(
                                 chat_id=int(GROUP_ID),
                                 member_limit=1,

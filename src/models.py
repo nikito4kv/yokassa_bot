@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, DECIMAL, TIMESTAMP, Enum, ForeignKey, Integer
+from sqlalchemy import BigInteger, DECIMAL, TIMESTAMP, Enum, ForeignKey, Integer, Date
 from sqlalchemy.orm import Mapped, mapped_column
 from src.database import Base
 import enum
@@ -28,6 +28,7 @@ class Subscription(Base):
     amount_paid: Mapped[decimal.Decimal] = mapped_column(DECIMAL)
     start_date: Mapped[datetime.datetime] = mapped_column(TIMESTAMP)
     invite_link: Mapped[str | None]
+    last_warning_sent: Mapped[datetime.date | None] = mapped_column(Date)
 
 class PaymentStatus(enum.Enum):
     succeeded = "succeeded"

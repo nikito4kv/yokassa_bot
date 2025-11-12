@@ -12,5 +12,8 @@ DB_PORT = os.getenv("DB_PORT")
 DB_NAME = os.getenv("DB_NAME")
 GROUP_ID = os.getenv("GROUP_ID")
 
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
+
 DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 

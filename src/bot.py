@@ -24,8 +24,8 @@ async def main() -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
-    dp.include_router(user_router)
     dp.include_router(payment_router) # Include payment_router
+    dp.include_router(user_router)
     dp.include_router(group_router) # Include group_router
 
     dp.startup.register(on_startup)

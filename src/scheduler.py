@@ -1,19 +1,21 @@
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.models import Subscription, SubscriptionStatus
 from src.config import GROUP_ID
 
 async def check_expired_subscriptions(bot: Bot, async_session: AsyncSession):
     """
-    Checks for expired subscriptions, removes users from the group, and updates their status.
+    Checks for subscriptions that expired more than 5 days ago, 
+    removes users from the group, and updates their status.
     """
     async with async_session() as session:
+        five_days_ago = datetime.now() - timedelta(days=5)
         expired_subscriptions = await session.execute(
             select(Subscription).where(
-                Subscription.end_date < datetime.now(),
+                Subscription.end_date < five_days_ago,
                 Subscription.status == SubscriptionStatus.active
             )
         )
@@ -31,7 +33,7 @@ async def check_expired_subscriptions(bot: Bot, async_session: AsyncSession):
                 # Notify user
                 await bot.send_message(
                     chat_id=subscription.user_id,
-                    text="Ваша подписка истекла, и вы были удалены из группы. Вы можете оформить новую подписку в любой момент."
+                    text="С момента окончания вашей подписки прошло 5 дней, и вы были удалены из группы. Вы можете оформить новую подписку в любой момент."
                 )
             except Exception as e:
                 # Log the error, e.g., if the bot can't ban a user (admin) or user not found

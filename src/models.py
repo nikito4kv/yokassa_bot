@@ -42,4 +42,5 @@ class Payment(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey('users.telegram_id'))
     status: Mapped[PaymentStatus] = mapped_column(Enum(PaymentStatus))
     subscription_id: Mapped[int] = mapped_column(Integer, ForeignKey('subscriptions.id'))
+    bot_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 

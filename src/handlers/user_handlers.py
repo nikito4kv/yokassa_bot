@@ -1,5 +1,5 @@
 from aiogram import Router, html, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,6 +7,7 @@ from datetime import datetime
 
 from src.models import User, Subscription, SubscriptionStatus
 from src.keyboards.user_keyboards import get_main_menu_keyboard, get_my_subscription_keyboard
+from src.lexicon import lexicon
 
 user_router = Router()
 
@@ -27,13 +28,16 @@ async def command_start_handler(message: Message, async_session: AsyncSession) -
             )
             session.add(new_user)
             await session.commit()
+            await message.answer(lexicon['welcome']['new_user_registered'])
     
     await message.answer(
-        f"Привет, {html.bold(message.from_user.full_name)}! Это бот для управления подпиской на закрытый канал.",
+        lexicon['welcome']['start_message'].format(
+            full_name=html.bold(message.from_user.full_name)
+        ),
         reply_markup=get_main_menu_keyboard()
     )
 
-@user_router.message(F.text == "Моя подписка")
+@user_router.message(F.text == lexicon['buttons']['main_menu']['my_subscription'])
 async def my_subscription_handler(message: Message, async_session: AsyncSession) -> None:
     """
     Handler for the 'My Subscription' button.
@@ -48,10 +52,13 @@ async def my_subscription_handler(message: Message, async_session: AsyncSession)
 
         if subscription and subscription[0].status == SubscriptionStatus.active and subscription[0].end_date > datetime.now():
             days_left = (subscription[0].end_date - datetime.now()).days
-            text = f"Ваша подписка активна. Осталось дней: {days_left}"
+            text = lexicon['subscription']['active_status'].format(
+                end_date=subscription[0].end_date.strftime("%d.%m.%Y"),
+                days_left=days_left
+            )
             is_active = True
         else:
-            text = "У вас нет активной подписки."
+            text = lexicon['subscription']['inactive_status']
             is_active = False
             
         await message.answer(text, reply_markup=get_my_subscription_keyboard(is_active))
@@ -61,5 +68,13 @@ async def echo_handler(message: Message) -> None:
     """
     Handler for unhandled messages.
     """
-    await message.answer("Пожалуйста, используйте кнопки меню для навигации.")
+    await message.answer(lexicon['general']['unhandled_message'])
+
+@user_router.message(F.text == lexicon['buttons']['main_menu']['help'])
+@user_router.message(Command('help'))
+async def help_handler(message: Message) -> None:
+    """
+    Handler for the 'Help' button and /help command.
+    """
+    await message.answer(lexicon['general']['help_message'])
 

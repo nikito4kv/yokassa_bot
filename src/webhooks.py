@@ -8,6 +8,7 @@ from yookassa import Payment as YooKassaPayment
 
 from src.models import Payment, PaymentStatus, Subscription, SubscriptionStatus
 from src.config import GROUP_ID
+from src.lexicon import lexicon # Added import
 
 async def yookassa_webhook_handler(request: web.Request) -> web.Response:
     """
@@ -62,10 +63,19 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                             subscription.status = SubscriptionStatus.active
                             subscription.start_date = datetime.now()
                             await session.commit()
-                            await bot.send_message(
-                                chat_id=subscription.user_id,
-                                text="Ваша подписка успешно продлена!"
-                            )
+                            
+                            # Edit original message if bot_message_id exists, otherwise send new
+                            if payment.bot_message_id:
+                                await bot.edit_message_text(
+                                    chat_id=subscription.user_id,
+                                    message_id=payment.bot_message_id,
+                                    text=lexicon['subscription']['renewed_successfully']
+                                )
+                            else:
+                                await bot.send_message(
+                                    chat_id=subscription.user_id,
+                                    text=lexicon['subscription']['renewed_successfully']
+                                )
                         else:
                             # Unban the user in case they were previously kicked
                             try:
@@ -83,12 +93,20 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                             subscription.invite_link = invite_link.invite_link
                             await session.commit()
 
-                            await bot.send_message(
-                                chat_id=subscription.user_id,
-                                text=f"Ваш платеж успешно обработан! Вот ваша ссылка для вступления в группу: {invite_link.invite_link}"
-                            )
+                            # Edit original message if bot_message_id exists, otherwise send new
+                            if payment.bot_message_id:
+                                await bot.edit_message_text(
+                                    chat_id=subscription.user_id,
+                                    message_id=payment.bot_message_id,
+                                    text=lexicon['subscription']['payment_processed_invite_link'].format(invite_link=invite_link.invite_link)
+                                )
+                            else:
+                                await bot.send_message(
+                                    chat_id=subscription.user_id,
+                                    text=lexicon['subscription']['payment_processed_invite_link'].format(invite_link=invite_link.invite_link)
+                                )
                 else:
-                    logging.error(f"Subscription not found for payment_id: {payment.id}")
+                    logging.error(f"Subscription not found for payment_id: {payment.id}") # This log message seems misplaced, should be for subscription not found
             else:
                 logging.warning(f"Payment record not found for yookassa_id: {yookassa_payment_id}")
     

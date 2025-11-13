@@ -100,10 +100,14 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
 
                         if is_member:
                             group_chat = await bot.get_chat(int(GROUP_ID))
-                            invite_link = await bot.export_chat_invite_link(int(GROUP_ID))
+                            invite_link = await bot.create_chat_invite_link(
+                                chat_id=int(GROUP_ID),
+                                member_limit=1,
+                                expire_date=datetime.now() + timedelta(days=3)
+                            )
                             
                             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                                [InlineKeyboardButton(text=f"Перейти в \"{group_chat.title}\"", url=invite_link)]
+                                [InlineKeyboardButton(text=f"Перейти в \"{group_chat.title}\"", url=invite_link.invite_link)]
                             ])
                             
                             if payment.bot_message_id:
@@ -128,8 +132,7 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                             invite_link = await bot.create_chat_invite_link(
                                 chat_id=int(GROUP_ID),
                                 member_limit=1,
-                                expire_date=subscription.end_date,
-                                name=f"Subscription for user {subscription.user_id}"
+                                expire_date=datetime.now() + timedelta(days=3)
                             )
                             
                             subscription.invite_link = invite_link.invite_link

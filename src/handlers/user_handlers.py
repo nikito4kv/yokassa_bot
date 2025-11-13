@@ -74,9 +74,29 @@ async def echo_handler(message: Message) -> None:
 
 @user_router.message(F.text == lexicon['buttons']['main_menu']['help'])
 @user_router.message(Command('help'))
-async def help_handler(message: Message) -> None:
+async def help_handler(message: Message, async_session: AsyncSession) -> None:
     """
     Handler for the 'Help' button and /help command.
+    Displays the start message.
     """
-    await message.answer(lexicon['general']['help_message'])
+    async with async_session() as session:
+        user = await session.execute(select(User).filter_by(telegram_id=message.from_user.id))
+        user = user.scalar_one_or_none()
+
+        if not user:
+            new_user = User(
+                telegram_id=message.from_user.id,
+                full_name=message.from_user.full_name,
+                username=message.from_user.username
+            )
+            session.add(new_user)
+            await session.commit()
+            await message.answer(lexicon['welcome']['new_user_registered'])
+    
+    await message.answer(
+        lexicon['welcome']['start_message'].format(
+            full_name=html.bold(message.from_user.full_name)
+        ),
+        reply_markup=get_main_menu_keyboard()
+    )
 

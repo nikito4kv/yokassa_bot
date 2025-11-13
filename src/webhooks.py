@@ -1,6 +1,7 @@
 import logging
 from aiohttp import web
 from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from datetime import datetime, timedelta
@@ -98,16 +99,25 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                             is_member = False
 
                         if is_member:
+                            group_chat = await bot.get_chat(int(GROUP_ID))
+                            invite_link = await bot.export_chat_invite_link(int(GROUP_ID))
+                            
+                            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text=f"Перейти в \"{group_chat.title}\"", url=invite_link)]
+                            ])
+                            
                             if payment.bot_message_id:
                                 await bot.edit_message_text(
                                     chat_id=subscription.user_id,
                                     message_id=payment.bot_message_id,
-                                    text=lexicon['subscription']['renewed_successfully']
+                                    text=lexicon['subscription']['renewed_successfully'],
+                                    reply_markup=keyboard
                                 )
                             else:
                                 await bot.send_message(
                                     chat_id=subscription.user_id,
-                                    text=lexicon['subscription']['renewed_successfully']
+                                    text=lexicon['subscription']['renewed_successfully'],
+                                    reply_markup=keyboard
                                 )
                         else:
                             try:

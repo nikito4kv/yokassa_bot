@@ -31,11 +31,10 @@ async def command_start_handler(message: Message, async_session: AsyncSession) -
             await message.answer(lexicon['welcome']['new_user_registered'])
     
     await message.answer(
-        lexicon['welcome']['start_message'].format(
-            full_name=html.bold(message.from_user.full_name)
-        ),
+        lexicon['welcome']['start_message'],
         reply_markup=get_main_menu_keyboard()
     )
+    await message.answer(lexicon['general']['info_message'])
 
 @user_router.message(F.text == lexicon['buttons']['main_menu']['my_subscription'])
 async def my_subscription_handler(message: Message, async_session: AsyncSession) -> None:
@@ -87,11 +86,10 @@ async def help_handler(message: Message, async_session: AsyncSession) -> None:
             await message.answer(lexicon['welcome']['new_user_registered'])
     
     await message.answer(
-        lexicon['welcome']['start_message'].format(
-            full_name=html.bold(message.from_user.full_name)
-        ),
+        lexicon['welcome']['start_message'],
         reply_markup=get_main_menu_keyboard()
     )
+    await message.answer(lexicon['general']['info_message'])
 
 @user_router.message(Command('info'))
 async def info_command_handler(message: Message) -> None:

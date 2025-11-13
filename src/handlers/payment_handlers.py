@@ -30,18 +30,18 @@ class FSMCreatePayment(StatesGroup):
 
 # --- Constants & Helpers ---
 TARIFF_DURATIONS = {
-    1500.0: "1 месяц",
-    2900.0: "1 месяц",
-    3900.0: "1 месяц",
-    4900.0: "1 месяц",
+    1500.0: timedelta(days=30),
+    2900.0: timedelta(days=60),
+    3900.0: timedelta(days=90),
+    4900.0: timedelta(days=180),
 }
 
-async def create_payment(amount: float, user_id: int, async_session: AsyncSession) -> tuple[Payment, str]:
+async def create_payment(amount: float, user_id: int, async_session: AsyncSession, bot: Bot, duration: timedelta) -> tuple[Payment, str]:
     """
     Creates a subscription and a YooKassa payment, returns the new Payment object and confirmation URL.
     """
     async with async_session() as session:
-        end_date = datetime.now() + timedelta(days=30)
+        end_date = datetime.now() + duration
         new_subscription = Subscription(
             user_id=user_id,
             end_date=end_date,
@@ -54,9 +54,12 @@ async def create_payment(amount: float, user_id: int, async_session: AsyncSessio
         await session.refresh(new_subscription)
 
         idempotence_key = str(uuid.uuid4())
+        bot_user = await bot.get_me()
+        return_url = f"https://t.me/{bot_user.username}"
+        
         yookassa_payment = YooKassaPayment.create({
             "amount": {"value": str(amount), "currency": "RUB"},
-            "confirmation": {"type": "redirect", "return_url": "https://t.me/sever_human_vznos_bot"},
+            "confirmation": {"type": "redirect", "return_url": return_url},
             "capture": True,
             "description": lexicon['payment']['description'].format(user_id=user_id),
             "metadata": {"subscription_id": new_subscription.id}
@@ -74,17 +77,17 @@ async def create_payment(amount: float, user_id: int, async_session: AsyncSessio
 
         return new_payment, yookassa_payment.confirmation.confirmation_url
 
-async def proceed_to_payment_confirmation(message: Message, amount: float, state: FSMContext):
+async def proceed_to_payment_confirmation(message: Message, amount: float, state: FSMContext, duration: timedelta):
     """
     Sends the payment confirmation message and sets the state.
     """
-    duration = TARIFF_DURATIONS.get(amount, f"{int(amount)} RUB")
+    duration_str = f"{duration.days} дней" if duration.days > 0 else "бессрочно"
     
     await state.set_state(FSMCreatePayment.confirming_payment)
-    await state.update_data(amount=amount)
+    await state.update_data(amount=amount, duration=duration)
 
     await message.answer(
-        lexicon['payment']['payment_confirmation'].format(duration=duration, amount=int(amount)),
+        lexicon['payment']['payment_confirmation'].format(duration=duration_str, amount=int(amount)),
         reply_markup=get_payment_confirmation_keyboard(),
         parse_mode="HTML"
     )
@@ -107,6 +110,7 @@ async def tariff_callback_handler(query: CallbackQuery, async_session: AsyncSess
         return
 
     amount = float(tariff)
+    duration = TARIFF_DURATIONS.get(amount, timedelta(days=30)) # Default to 30 days if not found
 
     async with async_session() as session:
         active_subscription = (await session.execute(
@@ -117,7 +121,7 @@ async def tariff_callback_handler(query: CallbackQuery, async_session: AsyncSess
 
         if active_subscription and active_subscription.end_date > datetime.now():
             await state.set_state(ConfirmOverwrite.waiting_for_confirmation)
-            await state.update_data(amount=amount)
+            await state.update_data(amount=amount, duration=duration)
             
             await query.message.answer(
                 lexicon['payment']['confirm_overwrite'].format(end_date=active_subscription.end_date.strftime("%d.%m.%Y")),
@@ -130,7 +134,7 @@ async def tariff_callback_handler(query: CallbackQuery, async_session: AsyncSess
                 parse_mode="HTML"
             )
         else:
-            await proceed_to_payment_confirmation(query.message, amount, state)
+            await proceed_to_payment_confirmation(query.message, amount, state, duration)
     
     await query.answer()
 
@@ -146,6 +150,7 @@ async def custom_amount_handler(message: Message, async_session: AsyncSession, s
         return
     
     await state.clear() # Clear CustomAmount state before proceeding
+    duration = timedelta(days=30) # Default duration for custom amounts
 
     async with async_session() as session:
         active_subscription = (await session.execute(
@@ -156,7 +161,7 @@ async def custom_amount_handler(message: Message, async_session: AsyncSession, s
 
         if active_subscription and active_subscription.end_date > datetime.now():
             await state.set_state(ConfirmOverwrite.waiting_for_confirmation)
-            await state.update_data(amount=amount)
+            await state.update_data(amount=amount, duration=duration)
             
             await message.answer(
                 lexicon['payment']['confirm_overwrite'].format(end_date=active_subscription.end_date.strftime("%d.%m.%Y")),
@@ -169,20 +174,21 @@ async def custom_amount_handler(message: Message, async_session: AsyncSession, s
                 parse_mode="HTML"
             )
         else:
-            await proceed_to_payment_confirmation(message, amount, state)
+            await proceed_to_payment_confirmation(message, amount, state, duration)
 
 @payment_router.callback_query(F.data == "confirm_payment", FSMCreatePayment.confirming_payment)
-async def confirm_payment_callback_handler(query: CallbackQuery, async_session: AsyncSession, state: FSMContext):
+async def confirm_payment_callback_handler(query: CallbackQuery, async_session: AsyncSession, state: FSMContext, bot: Bot):
     data = await state.get_data()
     amount = data.get("amount")
+    duration = data.get("duration")
 
-    if not amount:
+    if not amount or not duration:
         await query.message.edit_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
         await state.clear()
         await query.answer()
         return
 
-    new_payment, confirmation_url = await create_payment(amount, query.from_user.id, async_session)
+    new_payment, confirmation_url = await create_payment(amount, query.from_user.id, async_session, bot, duration)
     
     payment_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -216,14 +222,15 @@ async def process_overwrite_confirmation_yes(query: CallbackQuery, async_session
     await query.message.delete()
     data = await state.get_data()
     amount = data.get("amount")
+    duration = data.get("duration")
 
-    if not amount:
+    if not amount or not duration:
         await query.message.answer("Произошла ошибка. Пожалуйста, попробуйте снова.")
         await state.clear()
         await query.answer()
         return
 
-    await proceed_to_payment_confirmation(query.message, amount, state)
+    await proceed_to_payment_confirmation(query.message, amount, state, duration)
     await query.answer()
 
 @payment_router.callback_query(F.data == "confirm_overwrite_no", ConfirmOverwrite.waiting_for_confirmation)

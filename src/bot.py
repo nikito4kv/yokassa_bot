@@ -9,7 +9,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from src.config import BOT_TOKEN
+from src.config import BOT_TOKEN, GROUP_ID
 from src.handlers.user_handlers import user_router
 from src.handlers.payment_handlers import payment_router
 from src.handlers.group_handlers import group_router
@@ -31,6 +31,15 @@ async def on_shutdown(app_runner: web.AppRunner, scheduler: AsyncIOScheduler):
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+
+    if not GROUP_ID:
+        logging.error("GROUP_ID is not set in environment variables. Please set it to a valid integer.")
+        sys.exit(1)
+    try:
+        int(GROUP_ID)
+    except ValueError:
+        logging.error("GROUP_ID is not a valid integer. Please set it to a valid integer.")
+        sys.exit(1)
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(async_session=async_session)

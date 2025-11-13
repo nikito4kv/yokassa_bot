@@ -45,11 +45,6 @@ async def my_subscription_handler(message: Message, async_session: AsyncSession)
     """
     async with async_session() as session:
         # First, try to find an active subscription
-        result = await session.execute(
-            select(Subscription)
-            .filter_by(user_id=message.from_user.id, status=SubscriptionStatus.active)
-            .order_by(Subscription.end_date.desc()) # Still order by end_date in case there are multiple active (shouldn't happen, but for safety)
-        )
         active_subscription_result = await session.execute(
             select(Subscription)
             .filter_by(user_id=message.from_user.id, status=SubscriptionStatus.active)

@@ -2,8 +2,8 @@ import logging
 from aiohttp import web
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete # Added delete
-from datetime import datetime, timedelta # Added timedelta
+from sqlalchemy import select, delete
+from datetime import datetime, timedelta
 from yookassa import Payment as YooKassaPayment
 
 from src.models import Payment, PaymentStatus, Subscription, SubscriptionStatus
@@ -54,12 +54,11 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                     subscription = await session.get(Subscription, payment.subscription_id)
                     if subscription:
                         # --- Step 3.1: Find and Expire Old Active Subscriptions ---
-                        # Find any other active subscriptions for this user and set them to expired
                         other_active_subscriptions_result = await session.execute(
                             select(Subscription).where(
                                 Subscription.user_id == subscription.user_id,
                                 Subscription.status == SubscriptionStatus.active,
-                                Subscription.id != subscription.id # Exclude the current one
+                                Subscription.id != subscription.id
                             )
                         )
                         for old_active_sub in other_active_subscriptions_result.scalars().all():
@@ -69,20 +68,27 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                         # --- Step 3.2: Activate the New Subscription (Overwrite logic) ---
                         subscription.status = SubscriptionStatus.active
                         subscription.start_date = datetime.now()
-                        subscription.end_date = datetime.now() + timedelta(days=30) # New 30-day period from now
+                        subscription.end_date = datetime.now() + timedelta(days=30)
                         
-                        # --- Step 3.3: Cleanup Pending Subscriptions ---
-                        # Delete all other pending subscriptions for this user
-                        await session.execute(
-                            delete(Subscription).where(
+                        # --- Step 3.3: Cleanup Pending Subscriptions and Payments ---
+                        pending_subs_to_delete = await session.execute(
+                            select(Subscription).where(
                                 Subscription.user_id == subscription.user_id,
                                 Subscription.status == SubscriptionStatus.pending,
-                                Subscription.id != subscription.id # Exclude the current one (which is now active)
+                                Subscription.id != subscription.id
                             )
                         )
-                        logging.info(f"Cleaned up pending subscriptions for user {subscription.user_id}")
+                        for sub_to_delete in pending_subs_to_delete.scalars().all():
+                            # First, delete the associated payment
+                            await session.execute(
+                                delete(Payment).where(Payment.subscription_id == sub_to_delete.id)
+                            )
+                            # Then, delete the subscription
+                            await session.delete(sub_to_delete)
+                        
+                        logging.info(f"Cleaned up pending subscriptions and payments for user {subscription.user_id}")
 
-                        await session.commit() # Commit all changes (expire old, activate new, delete pending)
+                        await session.commit() # Commit all changes
 
                         # --- Send confirmation message ---
                         try:
@@ -92,7 +98,6 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                             is_member = False
 
                         if is_member:
-                            # User is already in the group, just notify about renewal
                             if payment.bot_message_id:
                                 await bot.edit_message_text(
                                     chat_id=subscription.user_id,
@@ -105,7 +110,6 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                                     text=lexicon['subscription']['renewed_successfully']
                                 )
                         else:
-                            # User is not in the group, send invite link
                             try:
                                 await bot.unban_chat_member(chat_id=int(GROUP_ID), user_id=subscription.user_id)
                             except Exception as e:
@@ -119,7 +123,7 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
                             )
                             
                             subscription.invite_link = invite_link.invite_link
-                            await session.commit() # Commit invite link update
+                            await session.commit()
 
                             if payment.bot_message_id:
                                 await bot.edit_message_text(

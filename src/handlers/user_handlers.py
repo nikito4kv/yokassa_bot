@@ -65,13 +65,6 @@ async def my_subscription_handler(message: Message, async_session: AsyncSession)
             
         await message.answer(text, reply_markup=get_my_subscription_keyboard(is_active))
 
-@user_router.message()
-async def echo_handler(message: Message) -> None:
-    """
-    Handler for unhandled messages.
-    """
-    await message.answer(lexicon['general']['unhandled_message'])
-
 @user_router.message(F.text == lexicon['buttons']['main_menu']['help'])
 @user_router.message(Command('help'))
 async def help_handler(message: Message, async_session: AsyncSession) -> None:
@@ -99,4 +92,11 @@ async def help_handler(message: Message, async_session: AsyncSession) -> None:
         ),
         reply_markup=get_main_menu_keyboard()
     )
+
+@user_router.message()
+async def echo_handler(message: Message) -> None:
+    """
+    Handler for unhandled messages.
+    """
+    await message.answer(lexicon['general']['unhandled_message'])
 

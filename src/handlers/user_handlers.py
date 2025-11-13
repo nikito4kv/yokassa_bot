@@ -41,19 +41,26 @@ async def command_start_handler(message: Message, async_session: AsyncSession) -
 async def my_subscription_handler(message: Message, async_session: AsyncSession) -> None:
     """
     Handler for the 'My Subscription' button.
+    Prioritizes showing active subscription status.
     """
     async with async_session() as session:
+        # First, try to find an active subscription
         result = await session.execute(
             select(Subscription)
-            .filter_by(user_id=message.from_user.id)
+            .filter_by(user_id=message.from_user.id, status=SubscriptionStatus.active)
+            .order_by(Subscription.end_date.desc()) # Still order by end_date in case there are multiple active (shouldn't happen, but for safety)
+        )
+        active_subscription_result = await session.execute(
+            select(Subscription)
+            .filter_by(user_id=message.from_user.id, status=SubscriptionStatus.active)
             .order_by(Subscription.end_date.desc())
         )
-        subscription = result.first()
+        active_subscription = active_subscription_result.scalars().first()
 
-        if subscription and subscription[0].status == SubscriptionStatus.active and subscription[0].end_date > datetime.now():
-            days_left = (subscription[0].end_date - datetime.now()).days
+        if active_subscription and active_subscription.end_date > datetime.now():
+            days_left = (active_subscription.end_date - datetime.now()).days
             text = lexicon['subscription']['active_status'].format(
-                end_date=subscription[0].end_date.strftime("%d.%m.%Y"),
+                end_date=active_subscription.end_date.strftime("%d.%m.%Y"),
                 days_left=days_left
             )
             is_active = True

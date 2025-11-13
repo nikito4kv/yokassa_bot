@@ -28,9 +28,9 @@ class FSMCreatePayment(StatesGroup):
 # --- Constants & Helpers ---
 TARIFF_DURATIONS = {
     1500.0: timedelta(days=30),
-    2900.0: timedelta(days=60),
-    3900.0: timedelta(days=90),
-    4900.0: timedelta(days=180),
+    2900.0: timedelta(days=30),
+    3900.0: timedelta(days=30),
+    4900.0: timedelta(days=30),
 }
 
 async def create_payment(amount: float, user_id: int, async_session: AsyncSession, bot: Bot, duration: timedelta) -> tuple[Payment, str]:

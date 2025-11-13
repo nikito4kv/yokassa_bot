@@ -1,4 +1,4 @@
-from aiogram import Router, Bot, html, F # Added html
+from aiogram import Router, Bot, html, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -11,27 +11,36 @@ import logging
 
 from src.config import YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, MIN_AMOUNT
 from src.models import Payment, PaymentStatus, Subscription, SubscriptionStatus
-from src.keyboards.user_keyboards import get_tariffs_keyboard
+from src.keyboards.user_keyboards import get_tariffs_keyboard, get_payment_confirmation_keyboard
 from src.lexicon import lexicon
 
 payment_router = Router()
 
 Configuration.configure(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY)
 
+# --- FSM States ---
 class CustomAmount(StatesGroup):
     waiting_for_amount = State()
 
-class ConfirmOverwrite(StatesGroup): # New FSM state for confirmation
+class ConfirmOverwrite(StatesGroup):
     waiting_for_confirmation = State()
-    tariff_data = {} # To store tariff data temporarily
 
-# --- Helper function to create payment ---
+class FSMCreatePayment(StatesGroup):
+    confirming_payment = State()
+
+# --- Constants & Helpers ---
+TARIFF_DURATIONS = {
+    1500.0: "1 месяц",
+    2900.0: "1 месяц",
+    3900.0: "1 месяц",
+    4900.0: "1 месяц",
+}
+
 async def create_payment(amount: float, user_id: int, async_session: AsyncSession) -> tuple[Payment, str]:
     """
     Creates a subscription and a YooKassa payment, returns the new Payment object and confirmation URL.
     """
     async with async_session() as session:
-        # Create a subscription record
         end_date = datetime.now() + timedelta(days=30)
         new_subscription = Subscription(
             user_id=user_id,
@@ -44,25 +53,15 @@ async def create_payment(amount: float, user_id: int, async_session: AsyncSessio
         await session.commit()
         await session.refresh(new_subscription)
 
-        # Create a payment in YooKassa
         idempotence_key = str(uuid.uuid4())
         yookassa_payment = YooKassaPayment.create({
-            "amount": {
-                "value": str(amount),
-                "currency": "RUB"
-            },
-            "confirmation": {
-                "type": "redirect",
-                "return_url": "https://t.me/sever_human_vznos_bot" # TODO: This should be configurable
-            },
+            "amount": {"value": str(amount), "currency": "RUB"},
+            "confirmation": {"type": "redirect", "return_url": "https://t.me/sever_human_vznos_bot"},
             "capture": True,
             "description": lexicon['payment']['description'].format(user_id=user_id),
-            "metadata": {
-                "subscription_id": new_subscription.id
-            }
+            "metadata": {"subscription_id": new_subscription.id}
         }, idempotence_key)
 
-        # Save payment details to our database
         new_payment = Payment(
             yookassa_id=yookassa_payment.id,
             user_id=user_id,
@@ -75,6 +74,21 @@ async def create_payment(amount: float, user_id: int, async_session: AsyncSessio
 
         return new_payment, yookassa_payment.confirmation.confirmation_url
 
+async def proceed_to_payment_confirmation(message: Message, amount: float, state: FSMContext):
+    """
+    Sends the payment confirmation message and sets the state.
+    """
+    duration = TARIFF_DURATIONS.get(amount, f"{int(amount)} RUB")
+    
+    await state.set_state(FSMCreatePayment.confirming_payment)
+    await state.update_data(amount=amount)
+
+    await message.answer(
+        lexicon['payment']['payment_confirmation'].format(duration=duration, amount=int(amount)),
+        reply_markup=get_payment_confirmation_keyboard(),
+        parse_mode="HTML"
+    )
+
 # --- Handlers ---
 
 @payment_router.message(F.text == lexicon['buttons']['main_menu']['tariffs'])
@@ -83,60 +97,40 @@ async def tariffs_handler(message: Message):
 
 @payment_router.callback_query(F.data.startswith("tariff_"))
 async def tariff_callback_handler(query: CallbackQuery, async_session: AsyncSession, state: FSMContext):
+    await query.message.delete() # Remove the tariffs keyboard
     tariff = query.data.split("_")[1]
-    amount = float(tariff) if tariff != "custom" else None # Store amount if not custom
+    
+    if tariff == "custom":
+        await state.set_state(CustomAmount.waiting_for_amount)
+        await query.message.answer(lexicon['payment']['enter_custom_amount'].format(min_amount=MIN_AMOUNT))
+        await query.answer()
+        return
+
+    amount = float(tariff)
 
     async with async_session() as session:
-        active_subscription = await session.execute(
+        active_subscription = (await session.execute(
             select(Subscription)
             .filter_by(user_id=query.from_user.id, status=SubscriptionStatus.active)
             .order_by(Subscription.end_date.desc())
-        )
-        active_subscription = active_subscription.scalar_one_or_none()
+        )).scalar_one_or_none()
 
         if active_subscription and active_subscription.end_date > datetime.now():
-            # User has an active subscription, ask for confirmation
-            confirm_keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
+            await state.set_state(ConfirmOverwrite.waiting_for_confirmation)
+            await state.update_data(amount=amount)
+            
+            await query.message.answer(
+                lexicon['payment']['confirm_overwrite'].format(end_date=active_subscription.end_date.strftime("%d.%m.%Y")),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(text=lexicon['buttons']['confirm_yes'], callback_data="confirm_overwrite_yes"),
                         InlineKeyboardButton(text=lexicon['buttons']['confirm_cancel'], callback_data="confirm_overwrite_no")
                     ]
-                ]
-            )
-            await state.set_state(ConfirmOverwrite.waiting_for_confirmation)
-            await state.update_data(tariff=tariff, amount=amount) # Store chosen tariff/amount
-            
-            await query.message.answer(
-                lexicon['payment']['confirm_overwrite'].format(end_date=active_subscription.end_date.strftime("%d.%m.%Y")),
-                reply_markup=confirm_keyboard,
-                parse_mode="HTML" # Ensure HTML formatting for bold text
+                ]),
+                parse_mode="HTML"
             )
         else:
-            # No active subscription, proceed directly
-            if tariff == "custom":
-                await state.set_state(CustomAmount.waiting_for_amount)
-                await query.message.answer(lexicon['payment']['enter_custom_amount'].format(min_amount=MIN_AMOUNT))
-            else:
-                new_payment, confirmation_url = await create_payment(amount, query.from_user.id, async_session)
-                
-                payment_keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text=lexicon['buttons']['pay'], url=confirmation_url)],
-                        [InlineKeyboardButton(text=lexicon['buttons']['payment_check'], callback_data=f"check_payment_{new_payment.id}")]
-                    ]
-                )
-                
-                sent_message = await query.message.answer(
-                    lexicon['payment']['payment_link_message'],
-                    reply_markup=payment_keyboard
-                )
-                
-                async with async_session() as session_update: # Use a new session for update
-                    payment_to_update = await session_update.get(Payment, new_payment.id)
-                    if payment_to_update:
-                        payment_to_update.bot_message_id = sent_message.message_id
-                        await session_update.commit()
+            await proceed_to_payment_confirmation(query.message, amount, state)
     
     await query.answer()
 
@@ -150,70 +144,44 @@ async def custom_amount_handler(message: Message, async_session: AsyncSession, s
     except ValueError:
         await message.answer(lexicon['payment']['invalid_amount_error'])
         return
+    
+    await state.clear() # Clear CustomAmount state before proceeding
 
     async with async_session() as session:
-        active_subscription = await session.execute(
+        active_subscription = (await session.execute(
             select(Subscription)
             .filter_by(user_id=message.from_user.id, status=SubscriptionStatus.active)
             .order_by(Subscription.end_date.desc())
-        )
-        active_subscription = active_subscription.scalar_one_or_none()
+        )).scalar_one_or_none()
 
         if active_subscription and active_subscription.end_date > datetime.now():
-            # User has an active subscription, ask for confirmation
-            confirm_keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
+            await state.set_state(ConfirmOverwrite.waiting_for_confirmation)
+            await state.update_data(amount=amount)
+            
+            await message.answer(
+                lexicon['payment']['confirm_overwrite'].format(end_date=active_subscription.end_date.strftime("%d.%m.%Y")),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(text=lexicon['buttons']['confirm_yes'], callback_data="confirm_overwrite_yes"),
                         InlineKeyboardButton(text=lexicon['buttons']['confirm_cancel'], callback_data="confirm_overwrite_no")
                     ]
-                ]
-            )
-            await state.set_state(ConfirmOverwrite.waiting_for_confirmation)
-            await state.update_data(tariff="custom", amount=amount) # Store chosen tariff/amount
-            
-            await message.answer(
-                lexicon['payment']['confirm_overwrite'].format(end_date=active_subscription.end_date.strftime("%d.%m.%Y")),
-                reply_markup=confirm_keyboard,
+                ]),
                 parse_mode="HTML"
             )
         else:
-            # No active subscription, proceed directly
-            new_payment, confirmation_url = await create_payment(amount, message.from_user.id, async_session)
-            
-            payment_keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text=lexicon['buttons']['pay'], url=confirmation_url)],
-                    [InlineKeyboardButton(text=lexicon['buttons']['payment_check'], callback_data=f"check_payment_{new_payment.id}")]
-                ]
-            )
-            
-            sent_message = await message.answer(
-                lexicon['payment']['payment_link_message'],
-                reply_markup=payment_keyboard
-            )
-            
-            async with async_session() as session_update: # Use a new session for update
-                payment_to_update = await session_update.get(Payment, new_payment.id)
-                if payment_to_update:
-                    payment_to_update.bot_message_id = sent_message.message_id
-                    await session_update.commit()
-                
-            await state.clear() # Clear CustomAmount state
+            await proceed_to_payment_confirmation(message, amount, state)
 
-@payment_router.callback_query(F.data == "confirm_overwrite_yes", ConfirmOverwrite.waiting_for_confirmation)
-async def process_overwrite_confirmation_yes(query: CallbackQuery, async_session: AsyncSession, state: FSMContext):
+@payment_router.callback_query(F.data == "confirm_payment", FSMCreatePayment.confirming_payment)
+async def confirm_payment_callback_handler(query: CallbackQuery, async_session: AsyncSession, state: FSMContext):
     data = await state.get_data()
-    tariff = data.get("tariff")
     amount = data.get("amount")
 
-    if not tariff or not amount:
-        await query.message.answer("Произошла ошибка. Пожалуйста, попробуйте снова.")
+    if not amount:
+        await query.message.edit_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
         await state.clear()
         await query.answer()
         return
 
-    # Proceed with payment creation
     new_payment, confirmation_url = await create_payment(amount, query.from_user.id, async_session)
     
     payment_keyboard = InlineKeyboardMarkup(
@@ -223,24 +191,45 @@ async def process_overwrite_confirmation_yes(query: CallbackQuery, async_session
         ]
     )
     
-    sent_message = await query.message.answer(
+    sent_message = await query.message.edit_text(
         lexicon['payment']['payment_link_message'],
         reply_markup=payment_keyboard
     )
     
-    async with async_session() as session_update: # Use a new session for update
+    async with async_session() as session_update:
         payment_to_update = await session_update.get(Payment, new_payment.id)
         if payment_to_update:
             payment_to_update.bot_message_id = sent_message.message_id
             await session_update.commit()
             
-    await state.clear() # Clear confirmation state
+    await state.clear()
+    await query.answer()
+
+@payment_router.callback_query(F.data == "cancel_payment", FSMCreatePayment.confirming_payment)
+async def cancel_payment_callback_handler(query: CallbackQuery, state: FSMContext):
+    await query.message.edit_text(lexicon['payment']['overwrite_cancelled'])
+    await state.clear()
+    await query.answer()
+
+@payment_router.callback_query(F.data == "confirm_overwrite_yes", ConfirmOverwrite.waiting_for_confirmation)
+async def process_overwrite_confirmation_yes(query: CallbackQuery, async_session: AsyncSession, state: FSMContext):
+    await query.message.delete()
+    data = await state.get_data()
+    amount = data.get("amount")
+
+    if not amount:
+        await query.message.answer("Произошла ошибка. Пожалуйста, попробуйте снова.")
+        await state.clear()
+        await query.answer()
+        return
+
+    await proceed_to_payment_confirmation(query.message, amount, state)
     await query.answer()
 
 @payment_router.callback_query(F.data == "confirm_overwrite_no", ConfirmOverwrite.waiting_for_confirmation)
 async def process_overwrite_confirmation_no(query: CallbackQuery, state: FSMContext):
-    await query.message.answer(lexicon['payment']['overwrite_cancelled'])
-    await state.clear() # Clear confirmation state
+    await query.message.edit_text(lexicon['payment']['overwrite_cancelled'])
+    await state.clear()
     await query.answer()
 
 @payment_router.callback_query(F.data.in_({"renew_subscription", "buy_subscription"}))

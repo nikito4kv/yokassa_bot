@@ -48,3 +48,16 @@ def get_my_subscription_keyboard(is_active: bool) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=button_text, callback_data=callback_data)]
         ]
     )
+
+def get_payment_confirmation_keyboard() -> InlineKeyboardMarkup:
+    """
+    Returns the keyboard for payment confirmation.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=lexicon['buttons']['pay'], callback_data="confirm_payment"),
+                InlineKeyboardButton(text=lexicon['buttons']['confirm_cancel'], callback_data="cancel_payment")
+            ]
+        ]
+    )

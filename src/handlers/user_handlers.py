@@ -93,6 +93,14 @@ async def help_handler(message: Message, async_session: AsyncSession) -> None:
         reply_markup=get_main_menu_keyboard()
     )
 
+@user_router.message(Command('info'))
+async def info_command_handler(message: Message) -> None:
+    """
+    Handler for the /info command.
+    Displays information about contributions.
+    """
+    await message.answer(lexicon['general']['info_message'])
+
 @user_router.message()
 async def echo_handler(message: Message) -> None:
     """

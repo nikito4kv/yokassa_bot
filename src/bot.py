@@ -5,7 +5,7 @@ from aiohttp import web
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from functools import partial
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
@@ -45,6 +45,11 @@ async def main() -> None:
     dp = Dispatcher(async_session=async_session)
     
     scheduler = AsyncIOScheduler()
+
+    # Filter routers to only handle private messages
+    user_router.message.filter(F.chat.type == "private")
+    payment_router.message.filter(F.chat.type == "private")
+    payment_router.callback_query.filter(F.message.chat.type == "private")
 
     dp.include_router(payment_router)
     dp.include_router(user_router)

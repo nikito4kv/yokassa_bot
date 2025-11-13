@@ -1,4 +1,5 @@
 from aiogram import Router, Bot, html, F
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -96,6 +97,7 @@ async def proceed_to_payment_confirmation(message: Message, amount: float, state
 
 # --- Handlers ---
 
+@payment_router.message(Command('tarif'))
 @payment_router.message(F.text == lexicon['buttons']['main_menu']['tariffs'])
 async def tariffs_handler(message: Message):
     await message.answer(lexicon['payment']['choose_tariff'], reply_markup=get_tariffs_keyboard())

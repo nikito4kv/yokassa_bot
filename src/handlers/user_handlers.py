@@ -36,6 +36,7 @@ async def command_start_handler(message: Message, async_session: AsyncSession) -
     )
     await message.answer(lexicon['general']['info_message'])
 
+@user_router.message(Command('status'))
 @user_router.message(F.text == lexicon['buttons']['main_menu']['my_subscription'])
 async def my_subscription_handler(message: Message, async_session: AsyncSession) -> None:
     """

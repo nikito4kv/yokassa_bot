@@ -97,7 +97,7 @@ async def proceed_to_payment_confirmation(message: Message, amount: float, state
 
 # --- Handlers ---
 
-@payment_router.message(Command('tarif'))
+@payment_router.message(Command('plans'))
 @payment_router.message(F.text == lexicon['buttons']['main_menu']['tariffs'])
 async def tariffs_handler(message: Message):
     await message.answer(lexicon['payment']['choose_tariff'], reply_markup=get_tariffs_keyboard())

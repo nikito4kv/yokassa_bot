@@ -3,17 +3,18 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select
 from yookassa import Configuration, Payment as YooKassaPayment
 import uuid
 from datetime import datetime, timedelta
 import logging
 
-from src.config import YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, MIN_AMOUNT
-from src.models import Payment, PaymentStatus, Subscription, SubscriptionStatus
+from src.config import YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, MIN_AMOUNT, ADMIN_IDS
+from src.models import Payment, PaymentStatus, Subscription, SubscriptionStatus, ManualPayment
 from src.keyboards.user_keyboards import get_tariffs_keyboard, get_payment_confirmation_keyboard
 from src.lexicon import lexicon
+from src.logic import get_system_settings, process_successful_payment
 
 payment_router = Router()
 
@@ -25,6 +26,9 @@ class CustomAmount(StatesGroup):
 
 class FSMCreatePayment(StatesGroup):
     confirming_payment = State()
+
+class ManualPaymentFSM(StatesGroup):
+    waiting_for_screenshot = State()
 
 # --- Constants & Helpers ---
 TARIFF_DURATIONS = {
@@ -168,6 +172,25 @@ async def confirm_payment_callback_handler(query: CallbackQuery, async_session: 
         await query.answer()
         return
 
+    # Check payment mode
+    async with async_session() as session:
+        settings = await get_system_settings(session)
+        is_manual = settings.manual_payment_enabled
+
+    if is_manual:
+        await state.set_state(ManualPaymentFSM.waiting_for_screenshot)
+        # Data (amount, duration) is preserved in FSMContext
+        
+        details_text = lexicon['payment']['manual_payment_details'].format(amount=int(amount))
+        
+        await query.message.edit_text(
+            f"{details_text}\n\n{lexicon['payment']['send_screenshot']}",
+            parse_mode="HTML",
+            reply_markup=None
+        )
+        await query.answer()
+        return
+
     new_payment, confirmation_url = await create_payment(amount, query.from_user.id, async_session, bot, duration)
     
     payment_keyboard = InlineKeyboardMarkup(
@@ -208,7 +231,7 @@ async def renew_from_warning_callback_handler(query: CallbackQuery):
     await query.answer()
 
 @payment_router.callback_query(F.data.startswith("check_payment_"))
-async def check_payment_callback_handler(query: CallbackQuery, async_session: AsyncSession):
+async def check_payment_callback_handler(query: CallbackQuery, async_session: AsyncSession, bot: Bot):
     payment_id = int(query.data.split("_")[2])
     
     async with async_session() as session:
@@ -226,7 +249,11 @@ async def check_payment_callback_handler(query: CallbackQuery, async_session: As
             yookassa_payment_info = YooKassaPayment.find_one(payment.yookassa_id)
             
             if yookassa_payment_info.status == 'succeeded':
-                await query.answer("Платеж успешно завершен! Ожидайте ссылку-приглашение.", show_alert=True)
+                if payment.status != PaymentStatus.succeeded:
+                    await process_successful_payment(bot, async_session, payment_id=payment.id)
+                    await query.answer("Платеж подтвержден! Ссылка отправлена.", show_alert=True)
+                else:
+                    await query.answer("Платеж уже успешно обработан!", show_alert=True)
             elif yookassa_payment_info.status == 'pending':
                 await query.answer("Платеж все еще в обработке. Пожалуйста, подождите.", show_alert=True)
             elif yookassa_payment_info.status == 'canceled' or yookassa_payment_info.status == 'failed':
@@ -239,3 +266,77 @@ async def check_payment_callback_handler(query: CallbackQuery, async_session: As
             await query.answer("Произошла ошибка при проверке статуса платежа.", show_alert=True)
             
     await query.answer()
+
+@payment_router.message(ManualPaymentFSM.waiting_for_screenshot, F.photo | F.document)
+async def manual_payment_screenshot_handler(message: Message, state: FSMContext, bot: Bot, async_session: async_sessionmaker[AsyncSession]):
+    data = await state.get_data()
+    amount = data.get("amount")
+    duration = data.get("duration")
+    
+    if not amount:
+        await message.answer("Ошибка состояния. Попробуйте заново выбрать тариф.")
+        await state.clear()
+        return
+
+    async with async_session() as session:
+        end_date = datetime.now() + duration
+        new_subscription = Subscription(
+            user_id=message.from_user.id,
+            end_date=end_date,
+            status=SubscriptionStatus.pending,
+            amount_paid=amount,
+            start_date=datetime.now()
+        )
+        session.add(new_subscription)
+        await session.commit()
+        await session.refresh(new_subscription)
+        
+        new_payment = Payment(
+            yookassa_id=None, 
+            user_id=message.from_user.id,
+            status=PaymentStatus.manual_review,
+            subscription_id=new_subscription.id
+        )
+        session.add(new_payment)
+        await session.commit()
+        await session.refresh(new_payment)
+        
+        if message.photo:
+            photo_id = message.photo[-1].file_id
+        elif message.document:
+            photo_id = message.document.file_id
+        else:
+            photo_id = "unknown"
+
+        manual_payment = ManualPayment(
+            user_id=message.from_user.id,
+            photo_id=photo_id,
+        )
+        session.add(manual_payment)
+        await session.commit()
+        
+        admin_text = lexicon['payment']['admin_new_payment'].format(
+            user=message.from_user.full_name,
+            user_id=message.from_user.id,
+            amount=amount,
+            duration=f"{duration.days} дней"
+        )
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text=lexicon['buttons']['admin_confirm_payment'], callback_data=f"admin_confirm_payment_{new_payment.id}"),
+                InlineKeyboardButton(text=lexicon['buttons']['admin_reject_payment'], callback_data=f"admin_reject_payment_{new_payment.id}")
+            ]
+        ])
+        
+        for admin_id in ADMIN_IDS:
+            try:
+                if message.photo:
+                    await bot.send_photo(chat_id=admin_id, photo=photo_id, caption=admin_text, reply_markup=keyboard)
+                else:
+                    await bot.send_document(chat_id=admin_id, document=photo_id, caption=admin_text, reply_markup=keyboard)
+            except Exception as e:
+                logging.error(f"Failed to send manual payment notification to admin {admin_id}: {e}")
+
+    await message.answer(lexicon['payment']['screenshot_received'])
+    await state.clear()

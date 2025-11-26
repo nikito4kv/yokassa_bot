@@ -13,6 +13,7 @@ from src.config import BOT_TOKEN, GROUP_ID
 from src.handlers.user_handlers import user_router
 from src.handlers.payment_handlers import payment_router
 from src.handlers.group_handlers import group_router
+from src.handlers.admin_handlers import admin_router
 from src.database import async_session, engine
 from src.webhooks import setup_webhook_routes
 from src.scheduler import check_expired_subscriptions, send_expiration_warnings
@@ -51,6 +52,7 @@ async def main() -> None:
     payment_router.message.filter(F.chat.type == "private")
     payment_router.callback_query.filter(F.message.chat.type == "private")
 
+    dp.include_router(admin_router)
     dp.include_router(payment_router)
     dp.include_router(user_router)
     dp.include_router(group_router)
@@ -64,7 +66,7 @@ async def main() -> None:
     # Create AppRunner
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, 'localhost', 8080) 
+    site = web.TCPSite(runner, '0.0.0.0', 8080) 
     await site.start()
 
     dp.startup.register(partial(on_startup, scheduler=scheduler))

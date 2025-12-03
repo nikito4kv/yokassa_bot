@@ -9,6 +9,7 @@ from yookassa import Configuration, Payment as YooKassaPayment
 import uuid
 from datetime import datetime, timedelta
 import logging
+import asyncio
 
 from src.config import YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, MIN_AMOUNT, ADMIN_IDS
 from src.models import Payment, PaymentStatus, Subscription, SubscriptionStatus, ManualPayment
@@ -54,18 +55,23 @@ async def create_payment(amount: float, user_id: int, async_session: AsyncSessio
         session.add(new_subscription)
         await session.commit()
         await session.refresh(new_subscription)
+        logging.info(f"Subscription created with ID: {new_subscription.id}")
 
         idempotence_key = str(uuid.uuid4())
+        logging.info("Fetching bot info...")
         bot_user = await bot.get_me()
+        logging.info(f"Bot info fetched: {bot_user.username}")
         return_url = f"https://t.me/{bot_user.username}"
         
-        yookassa_payment = YooKassaPayment.create({
+        logging.info("Calling YooKassa API...")
+        yookassa_payment = await asyncio.to_thread(YooKassaPayment.create, {
             "amount": {"value": str(amount), "currency": "RUB"},
             "confirmation": {"type": "redirect", "return_url": return_url},
             "capture": True,
             "description": lexicon['payment']['description'].format(user_id=user_id),
             "metadata": {"subscription_id": new_subscription.id}
         }, idempotence_key)
+        logging.info("YooKassa API call successful.")
 
         new_payment = Payment(
             yookassa_id=yookassa_payment.id,
@@ -191,25 +197,29 @@ async def confirm_payment_callback_handler(query: CallbackQuery, async_session: 
         await query.answer()
         return
 
-    new_payment, confirmation_url = await create_payment(amount, query.from_user.id, async_session, bot, duration)
-    
-    payment_keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=lexicon['buttons']['pay'], url=confirmation_url)],
-            [InlineKeyboardButton(text=lexicon['buttons']['payment_check'], callback_data=f"check_payment_{new_payment.id}")]
-        ]
-    )
-    
-    sent_message = await query.message.edit_text(
-        lexicon['payment']['payment_link_message'],
-        reply_markup=payment_keyboard
-    )
-    
-    async with async_session() as session_update:
-        payment_to_update = await session_update.get(Payment, new_payment.id)
-        if payment_to_update:
-            payment_to_update.bot_message_id = sent_message.message_id
-            await session_update.commit()
+    try:
+        new_payment, confirmation_url = await create_payment(amount, query.from_user.id, async_session, bot, duration)
+        
+        payment_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=lexicon['buttons']['pay'], url=confirmation_url)],
+                [InlineKeyboardButton(text=lexicon['buttons']['payment_check'], callback_data=f"check_payment_{new_payment.id}")]
+            ]
+        )
+        
+        sent_message = await query.message.edit_text(
+            lexicon['payment']['payment_link_message'],
+            reply_markup=payment_keyboard
+        )
+        
+        async with async_session() as session_update:
+            payment_to_update = await session_update.get(Payment, new_payment.id)
+            if payment_to_update:
+                payment_to_update.bot_message_id = sent_message.message_id
+                await session_update.commit()
+    except Exception as e:
+        logging.error(f"Error creating payment: {e}")
+        await query.message.edit_text("Произошла ошибка при создании платежа. Пожалуйста, свяжитесь с администратором.")
             
     await state.clear()
     await query.answer()
@@ -246,7 +256,7 @@ async def check_payment_callback_handler(query: CallbackQuery, async_session: As
             return
             
         try:
-            yookassa_payment_info = YooKassaPayment.find_one(payment.yookassa_id)
+            yookassa_payment_info = await asyncio.to_thread(YooKassaPayment.find_one, payment.yookassa_id)
             
             if yookassa_payment_info.status == 'succeeded':
                 if payment.status != PaymentStatus.succeeded:
@@ -315,9 +325,11 @@ async def manual_payment_screenshot_handler(message: Message, state: FSMContext,
         session.add(manual_payment)
         await session.commit()
         
+        user_identifier = f"@{message.from_user.username}" if message.from_user.username else f"ID: {message.from_user.id}"
+        
         admin_text = lexicon['payment']['admin_new_payment'].format(
             user=message.from_user.full_name,
-            user_id=message.from_user.id,
+            user_id=user_identifier,
             amount=amount,
             duration=f"{duration.days} дней"
         )

@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from aiohttp import web
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -33,7 +34,7 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
         
         # --- Webhook Validation: Object Status Check ---
         try:
-            payment_info = YooKassaPayment.find_one(yookassa_payment_id)
+            payment_info = await asyncio.to_thread(YooKassaPayment.find_one, yookassa_payment_id)
             if not payment_info or payment_info.status != 'succeeded':
                 logging.warning(f"Invalid payment status for yookassa_id: {yookassa_payment_id}. Status: {payment_info.status if payment_info else 'Not Found'}")
                 return web.Response(status=400, text="Invalid payment status")
